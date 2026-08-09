@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: collabforge-api
+    runtime: docker
+    dockerfilePath: ./docker/Dockerfile
+    dockerContext: .
+    plan: free
+    region: frankfurt
+    healthCheckPath: /health
+    preDeployCommand: pnpm run migration:run
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: INVITE_SECRET
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: https://collabforge.pages.dev
