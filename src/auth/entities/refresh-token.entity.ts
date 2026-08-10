@@ -35,7 +35,7 @@ export class RefreshToken {
   @Column({ name: 'revoked_at', type: 'timestamptz', nullable: true })
   revokedAt!: Date | null;
 
-  @Column({ name: 'user_agent', nullable: true })
+  @Column({ name: 'user_agent', type: 'text', nullable: true })
   userAgent!: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
