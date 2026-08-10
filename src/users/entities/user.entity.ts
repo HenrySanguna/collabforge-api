@@ -7,6 +7,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { RefreshToken } from '../../auth/entities/refresh-token.entity';
+import { BoardMember } from '../../boards/entities/board-member.entity';
 
 @Entity('users')
 export class User {
@@ -34,4 +35,7 @@ export class User {
 
   @OneToMany(() => RefreshToken, (t) => t.user)
   refreshTokens!: RefreshToken[];
+
+  @OneToMany(() => BoardMember, (m) => m.user)
+  memberships!: BoardMember[];
 }

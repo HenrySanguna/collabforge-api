@@ -18,6 +18,7 @@ function aUser(overrides: Partial<User> = {}): User {
     isActive: true,
     createdAt: new Date(),
     refreshTokens: [],
+    memberships: [],
     ...overrides,
   };
 }
