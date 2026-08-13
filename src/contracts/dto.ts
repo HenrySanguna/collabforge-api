@@ -93,3 +93,14 @@ export interface NoteMovedPayload {
   position: number;
   version: number;
 }
+
+export interface CursorMovePayload {
+  x: number;
+  y: number;
+}
+
+export interface CursorMovedPayload {
+  userId: string;
+  x: number;
+  y: number;
+}

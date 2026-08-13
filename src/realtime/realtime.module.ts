@@ -11,6 +11,7 @@ import { WsAuthService } from './ws-auth.service';
 import { WsJwtGuard } from './guards/ws-jwt.guard';
 import { PhaseGuard } from './guards/phase.guard';
 import { BoardSnapshotService } from './board-snapshot.service';
+import { PresenceService } from './presence.service';
 import { BoardGateway } from './board.gateway';
 
 @Module({
@@ -27,6 +28,7 @@ import { BoardGateway } from './board.gateway';
     WsJwtGuard,
     PhaseGuard,
     BoardSnapshotService,
+    PresenceService,
     BoardGateway,
   ],
 })

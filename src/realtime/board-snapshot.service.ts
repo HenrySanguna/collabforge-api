@@ -6,6 +6,7 @@ import { BoardsService } from '../boards/boards.service';
 import type { BoardRole } from '../boards/entities/board-member.entity';
 import { NotesService } from '../notes/notes.service';
 import { NoteSerializerService } from '../notes/note-serializer.service';
+import { PresenceService } from './presence.service';
 import type { BoardSnapshot } from '../contracts';
 
 @Injectable()
@@ -16,6 +17,7 @@ export class BoardSnapshotService {
     private readonly boards: BoardsService,
     private readonly notes: NotesService,
     private readonly serializer: NoteSerializerService,
+    private readonly presence: PresenceService,
   ) {}
 
   async build(
@@ -54,7 +56,7 @@ export class BoardSnapshotService {
       ),
       myVotes: {},
       tally: null,
-      participants: [],
+      participants: this.presence.list(boardId),
       actionItems: [],
       myRole: viewerRole,
       serverTime: new Date().toISOString(),

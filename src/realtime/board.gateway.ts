@@ -2,6 +2,7 @@ import {
   ConnectedSocket,
   MessageBody,
   OnGatewayConnection,
+  OnGatewayDisconnect,
   SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
@@ -20,22 +21,26 @@ import { PhaseGuard } from './guards/phase.guard';
 import { AllowedPhases } from './decorators/allowed-phases.decorator';
 import { WsExceptionFilter } from './ws-exception.filter';
 import { BoardSnapshotService } from './board-snapshot.service';
+import { PresenceService } from './presence.service';
 import { toWsErrorPayload } from './ws-error.util';
 import { requireSocketData } from './socket-data.util';
 import { MembersService } from '../boards/members.service';
 import { BoardsService } from '../boards/boards.service';
 import { NotesService } from '../notes/notes.service';
 import { NoteSerializerService } from '../notes/note-serializer.service';
+import { avatarColorFor } from '../auth/avatar-color.util';
 import { CreateNoteDto } from './dto/create-note.dto';
 import { UpdateNoteDto } from './dto/update-note.dto';
 import { MoveNoteDto } from './dto/move-note.dto';
 import { DeleteNoteDto } from './dto/delete-note.dto';
+import { CursorMoveDto } from './dto/cursor-move.dto';
 import type { AuthenticatedSocket } from './types/authenticated-socket.interface';
 import type {
   CreateNoteAck,
   UpdateNoteAck,
   MoveNoteAck,
   DeleteNoteAck,
+  ParticipantDto,
 } from '../contracts';
 
 export function room(boardId: string): string {
@@ -51,7 +56,7 @@ export function room(boardId: string): string {
 @UseGuards(WsJwtGuard, PhaseGuard)
 @UseFilters(WsExceptionFilter)
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
-export class BoardGateway implements OnGatewayConnection {
+export class BoardGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer() private readonly server!: Server;
 
   constructor(
@@ -61,6 +66,7 @@ export class BoardGateway implements OnGatewayConnection {
     private readonly notes: NotesService,
     private readonly serializer: NoteSerializerService,
     private readonly snapshot: BoardSnapshotService,
+    private readonly presence: PresenceService,
   ) {}
 
   async handleConnection(client: AuthenticatedSocket): Promise<void> {
@@ -87,9 +93,43 @@ export class BoardGateway implements OnGatewayConnection {
         'board:sync',
         await this.snapshot.build(boardId, user.id, membership.role),
       );
+
+      const participant: ParticipantDto = {
+        userId: user.id,
+        name: user.name,
+        avatarColor: avatarColorFor(user.email),
+        role: membership.role,
+        isOnline: true,
+      };
+      const isFirstTab = this.presence.addConnection(
+        boardId,
+        participant,
+        client.id,
+      );
+      if (isFirstTab) {
+        this.server
+          .to(room(boardId))
+          .emit('presence:updated', { participants: this.presence.list(boardId) });
+      }
     } catch (err) {
       client.emit('error', toWsErrorPayload(err));
       client.disconnect(true);
+    }
+  }
+
+  handleDisconnect(client: AuthenticatedSocket): void {
+    const { boardId, user } = client.data;
+    if (!boardId || !user) return;
+
+    const isLastTab = this.presence.removeConnection(
+      boardId,
+      user.id,
+      client.id,
+    );
+    if (isLastTab) {
+      this.server
+        .to(room(boardId))
+        .emit('presence:updated', { participants: this.presence.list(boardId) });
     }
   }
 
@@ -170,5 +210,16 @@ export class BoardGateway implements OnGatewayConnection {
     } catch (err) {
       return { ok: false, error: toWsErrorPayload(err) };
     }
+  }
+
+  @SubscribeMessage('cursor:move')
+  onCursorMove(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() dto: CursorMoveDto,
+  ): void {
+    const { boardId, user } = requireSocketData(client);
+    client.volatile
+      .to(room(boardId))
+      .emit('cursor:moved', { userId: user.id, x: dto.x, y: dto.y });
   }
 }

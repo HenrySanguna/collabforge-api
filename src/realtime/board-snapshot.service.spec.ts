@@ -3,9 +3,11 @@ import { BoardSnapshotService } from './board-snapshot.service';
 import { BoardsService } from '../boards/boards.service';
 import { NotesService } from '../notes/notes.service';
 import { NoteSerializerService } from '../notes/note-serializer.service';
+import { PresenceService } from './presence.service';
 import { BoardColumn } from '../boards/entities/board-column.entity';
 import { Board } from '../boards/entities/board.entity';
 import { Note } from '../notes/entities/note.entity';
+import type { ParticipantDto } from '../contracts';
 
 function aBoard(overrides: Partial<Board> = {}): Board {
   return {
@@ -30,18 +32,21 @@ describe('BoardSnapshotService', () => {
   let boards: { findByIdOrFail: jest.Mock };
   let notes: { findAllForBoard: jest.Mock };
   let serializer: { forViewer: jest.Mock };
+  let presence: { list: jest.Mock };
 
   beforeEach(() => {
     columnsRepo = { find: jest.fn().mockResolvedValue([]) };
     boards = { findByIdOrFail: jest.fn().mockResolvedValue(aBoard()) };
     notes = { findAllForBoard: jest.fn().mockResolvedValue([]) };
     serializer = { forViewer: jest.fn() };
+    presence = { list: jest.fn().mockReturnValue([]) };
 
     service = new BoardSnapshotService(
       columnsRepo as unknown as Repository<BoardColumn>,
       boards as unknown as BoardsService,
       notes as unknown as NotesService,
       serializer as unknown as NoteSerializerService,
+      presence as unknown as PresenceService,
     );
   });
 
@@ -68,6 +73,24 @@ describe('BoardSnapshotService', () => {
       'member',
     );
     expect(typeof snapshot.serverTime).toBe('string');
+  });
+
+  it('usa la lista de presencia del tablero para participants', async () => {
+    const participants: ParticipantDto[] = [
+      {
+        userId: 'user-2',
+        name: 'Bruno',
+        avatarColor: '#abcdef',
+        role: 'member',
+        isOnline: true,
+      },
+    ];
+    presence.list.mockReturnValue(participants);
+
+    const snapshot = await service.build('board-1', 'user-2', 'member');
+
+    expect(presence.list).toHaveBeenCalledWith('board-1');
+    expect(snapshot.participants).toBe(participants);
   });
 
   it('serializa timerEndsAt como ISO string o null', async () => {

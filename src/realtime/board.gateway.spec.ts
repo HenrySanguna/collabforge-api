@@ -1,7 +1,9 @@
 import { WsException } from '@nestjs/websockets';
 import { BoardGateway, room } from './board.gateway';
+import { avatarColorFor } from '../auth/avatar-color.util';
 import type { WsAuthService } from './ws-auth.service';
 import type { BoardSnapshotService } from './board-snapshot.service';
+import type { PresenceService } from './presence.service';
 import type { MembersService } from '../boards/members.service';
 import type { BoardsService } from '../boards/boards.service';
 import type { NotesService } from '../notes/notes.service';
@@ -9,8 +11,9 @@ import type { NoteSerializerService } from '../notes/note-serializer.service';
 
 function aClient(dataOverrides: object = {}) {
   return {
+    id: 'socket-1',
     data: {
-      user: { id: 'user-1' },
+      user: { id: 'user-1', email: 'ana@test.com', name: 'Ana' },
       boardId: 'board-1',
       role: 'member',
       ...dataOverrides,
@@ -22,6 +25,7 @@ function aClient(dataOverrides: object = {}) {
     join: jest.fn().mockResolvedValue(undefined),
     emit: jest.fn(),
     to: jest.fn().mockReturnValue({ emit: jest.fn() }),
+    volatile: { to: jest.fn().mockReturnValue({ emit: jest.fn() }) },
     disconnect: jest.fn(),
   };
 }
@@ -39,6 +43,12 @@ describe('BoardGateway', () => {
   };
   let serializer: { forOthers: jest.Mock; forAuthor: jest.Mock };
   let snapshot: { build: jest.Mock };
+  let presence: {
+    addConnection: jest.Mock;
+    removeConnection: jest.Mock;
+    list: jest.Mock;
+  };
+  let server: { to: jest.Mock };
 
   beforeEach(() => {
     wsAuth = { verify: jest.fn() };
@@ -59,6 +69,11 @@ describe('BoardGateway', () => {
         .mockReturnValue({ id: 'note-1', projection: 'author' }),
     };
     snapshot = { build: jest.fn().mockResolvedValue({ board: {} }) };
+    presence = {
+      addConnection: jest.fn().mockReturnValue(true),
+      removeConnection: jest.fn().mockReturnValue(true),
+      list: jest.fn().mockReturnValue([]),
+    };
 
     gateway = new BoardGateway(
       wsAuth as unknown as WsAuthService,
@@ -67,7 +82,11 @@ describe('BoardGateway', () => {
       notes as unknown as NotesService,
       serializer as unknown as NoteSerializerService,
       snapshot as unknown as BoardSnapshotService,
+      presence as unknown as PresenceService,
     );
+
+    server = { to: jest.fn().mockReturnValue({ emit: jest.fn() }) };
+    (gateway as unknown as { server: typeof server }).server = server;
   });
 
   describe('handleConnection', () => {
@@ -77,7 +96,11 @@ describe('BoardGateway', () => {
         boardId: undefined,
         role: undefined,
       });
-      wsAuth.verify.mockResolvedValue({ id: 'user-1' });
+      wsAuth.verify.mockResolvedValue({
+        id: 'user-1',
+        email: 'ana@test.com',
+        name: 'Ana',
+      });
       boards.findByIdOrFail.mockResolvedValue({ id: 'board-1' });
       members.requireMembership.mockResolvedValue({ role: 'owner' });
 
@@ -116,7 +139,11 @@ describe('BoardGateway', () => {
         boardId: undefined,
         role: undefined,
       });
-      wsAuth.verify.mockResolvedValue({ id: 'user-1' });
+      wsAuth.verify.mockResolvedValue({
+        id: 'user-1',
+        email: 'ana@test.com',
+        name: 'Ana',
+      });
       boards.findByIdOrFail.mockResolvedValue({ id: 'board-1' });
       members.requireMembership.mockRejectedValue(
         new WsException({ code: 'NOT_A_MEMBER', message: 'nope' }),
@@ -129,6 +156,125 @@ describe('BoardGateway', () => {
         expect.objectContaining({ code: 'NOT_A_MEMBER' }),
       );
       expect(client.disconnect).toHaveBeenCalledWith(true);
+    });
+
+    it('añade al usuario a presencia y difunde presence:updated a toda la sala en la primera pestaña', async () => {
+      const client = aClient({
+        user: undefined,
+        boardId: undefined,
+        role: undefined,
+      });
+      wsAuth.verify.mockResolvedValue({
+        id: 'user-1',
+        email: 'ana@test.com',
+        name: 'Ana',
+      });
+      boards.findByIdOrFail.mockResolvedValue({ id: 'board-1' });
+      members.requireMembership.mockResolvedValue({ role: 'owner' });
+      presence.addConnection.mockReturnValue(true);
+      const participants = [{ userId: 'user-1' }];
+      presence.list.mockReturnValue(participants);
+      const serverEmit = jest.fn();
+      server.to.mockReturnValue({ emit: serverEmit });
+
+      await gateway.handleConnection(client as never);
+
+      expect(presence.addConnection).toHaveBeenCalledWith(
+        'board-1',
+        {
+          userId: 'user-1',
+          name: 'Ana',
+          avatarColor: avatarColorFor('ana@test.com'),
+          role: 'owner',
+          isOnline: true,
+        },
+        'socket-1',
+      );
+      expect(server.to).toHaveBeenCalledWith(room('board-1'));
+      expect(serverEmit).toHaveBeenCalledWith('presence:updated', {
+        participants,
+      });
+    });
+
+    it('no difunde presence:updated en la segunda pestaña del mismo usuario', async () => {
+      const client = aClient({
+        user: undefined,
+        boardId: undefined,
+        role: undefined,
+      });
+      wsAuth.verify.mockResolvedValue({
+        id: 'user-1',
+        email: 'ana@test.com',
+        name: 'Ana',
+      });
+      boards.findByIdOrFail.mockResolvedValue({ id: 'board-1' });
+      members.requireMembership.mockResolvedValue({ role: 'owner' });
+      presence.addConnection.mockReturnValue(false);
+
+      await gateway.handleConnection(client as never);
+
+      expect(server.to).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handleDisconnect', () => {
+    it('elimina la última pestaña y difunde presence:updated con la lista actualizada', () => {
+      const client = aClient();
+      presence.removeConnection.mockReturnValue(true);
+      const participants: unknown[] = [];
+      presence.list.mockReturnValue(participants);
+      const serverEmit = jest.fn();
+      server.to.mockReturnValue({ emit: serverEmit });
+
+      gateway.handleDisconnect(client as never);
+
+      expect(presence.removeConnection).toHaveBeenCalledWith(
+        'board-1',
+        'user-1',
+        'socket-1',
+      );
+      expect(server.to).toHaveBeenCalledWith(room('board-1'));
+      expect(serverEmit).toHaveBeenCalledWith('presence:updated', {
+        participants,
+      });
+    });
+
+    it('no difunde nada si quedan otras pestañas activas del usuario', () => {
+      const client = aClient();
+      presence.removeConnection.mockReturnValue(false);
+
+      gateway.handleDisconnect(client as never);
+
+      expect(server.to).not.toHaveBeenCalled();
+    });
+
+    it('es un no-op seguro si el socket nunca completó el handshake', () => {
+      const client = aClient({
+        user: undefined,
+        boardId: undefined,
+        role: undefined,
+      });
+
+      expect(() => gateway.handleDisconnect(client as never)).not.toThrow();
+      expect(presence.removeConnection).not.toHaveBeenCalled();
+      expect(server.to).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('onCursorMove', () => {
+    it('difunde cursor:moved de forma volatile a la sala', () => {
+      const client = aClient();
+      const volatileEmit = jest.fn();
+      client.volatile.to.mockReturnValue({ emit: volatileEmit });
+
+      gateway.onCursorMove(client as never, { x: 0.5, y: 0.25 });
+
+      expect(client.volatile.to).toHaveBeenCalledWith(room('board-1'));
+      expect(volatileEmit).toHaveBeenCalledWith('cursor:moved', {
+        userId: 'user-1',
+        x: 0.5,
+        y: 0.25,
+      });
     });
   });
 
