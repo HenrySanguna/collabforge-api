@@ -197,6 +197,15 @@ describe('BoardsService', () => {
     });
   });
 
+  describe('save', () => {
+    it('persiste el tablero recibido', async () => {
+      const board = aBoard({ phase: 'VOTING' });
+      const result = await service.save(board);
+      expect(boardsRepo.save).toHaveBeenCalledWith(board);
+      expect(result).toBe(board);
+    });
+  });
+
   describe('archive', () => {
     it('marca el tablero como archivado', async () => {
       boardsRepo.findOneBy.mockResolvedValue(

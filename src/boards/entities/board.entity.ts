@@ -52,6 +52,12 @@ export class Board {
   @Column({ name: 'timer_ends_at', type: 'timestamptz', nullable: true })
   timerEndsAt!: Date | null;
 
+  @Column({ name: 'timer_paused', default: false })
+  timerPaused!: boolean;
+
+  @Column({ name: 'timer_remaining_ms', type: 'integer', nullable: true })
+  timerRemainingMs!: number | null;
+
   @Column({ name: 'is_archived', default: false })
   isArchived!: boolean;
 

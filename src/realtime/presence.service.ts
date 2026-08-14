@@ -54,4 +54,9 @@ export class PresenceService {
     if (!users) return [];
     return Array.from(users.values()).map((entry) => entry.participant);
   }
+
+  socketIdsFor(boardId: string, userId: string): string[] {
+    const entry = this.boards.get(boardId)?.get(userId);
+    return entry ? Array.from(entry.socketIds) : [];
+  }
 }

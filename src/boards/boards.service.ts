@@ -134,6 +134,10 @@ export class BoardsService {
     return board;
   }
 
+  save(board: Board): Promise<Board> {
+    return this.boards.save(board);
+  }
+
   async archive(boardId: string, userId: string): Promise<BoardDetailDto> {
     const board = await this.requireOwner(boardId, userId);
     board.isArchived = true;

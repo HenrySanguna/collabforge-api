@@ -24,6 +24,7 @@ export async function createTestApp(): Promise<TestContext> {
       transform: true,
     }),
   );
+  app.setGlobalPrefix('api', { exclude: ['health'] });
   await app.init();
   await app.listen(0);
 

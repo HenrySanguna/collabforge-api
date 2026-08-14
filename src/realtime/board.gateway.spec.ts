@@ -8,6 +8,8 @@ import type { MembersService } from '../boards/members.service';
 import type { BoardsService } from '../boards/boards.service';
 import type { NotesService } from '../notes/notes.service';
 import type { NoteSerializerService } from '../notes/note-serializer.service';
+import type { VotesService } from '../votes/votes.service';
+import type { SessionService } from '../session/session.service';
 
 function aClient(dataOverrides: object = {}) {
   return {
@@ -47,8 +49,24 @@ describe('BoardGateway', () => {
     addConnection: jest.Mock;
     removeConnection: jest.Mock;
     list: jest.Mock;
+    socketIdsFor: jest.Mock;
   };
-  let server: { to: jest.Mock };
+  let votes: { cast: jest.Mock; retract: jest.Mock; tally: jest.Mock };
+  let session: {
+    changePhase: jest.Mock;
+    startTimer: jest.Mock;
+    pauseTimer: jest.Mock;
+    cancelTimer: jest.Mock;
+    reveal: jest.Mock;
+    kick: jest.Mock;
+  };
+  let server: {
+    to: jest.Mock;
+    in: jest.Mock;
+    sockets: {
+      sockets: Map<string, { emit: jest.Mock; disconnect: jest.Mock }>;
+    };
+  };
 
   beforeEach(() => {
     wsAuth = { verify: jest.fn() };
@@ -73,6 +91,20 @@ describe('BoardGateway', () => {
       addConnection: jest.fn().mockReturnValue(true),
       removeConnection: jest.fn().mockReturnValue(true),
       list: jest.fn().mockReturnValue([]),
+      socketIdsFor: jest.fn().mockReturnValue([]),
+    };
+    votes = {
+      cast: jest.fn(),
+      retract: jest.fn(),
+      tally: jest.fn().mockResolvedValue({}),
+    };
+    session = {
+      changePhase: jest.fn(),
+      startTimer: jest.fn(),
+      pauseTimer: jest.fn(),
+      cancelTimer: jest.fn(),
+      reveal: jest.fn(),
+      kick: jest.fn(),
     };
 
     gateway = new BoardGateway(
@@ -83,9 +115,17 @@ describe('BoardGateway', () => {
       serializer as unknown as NoteSerializerService,
       snapshot as unknown as BoardSnapshotService,
       presence as unknown as PresenceService,
+      votes as unknown as VotesService,
+      session as unknown as SessionService,
     );
 
-    server = { to: jest.fn().mockReturnValue({ emit: jest.fn() }) };
+    server = {
+      to: jest.fn().mockReturnValue({ emit: jest.fn() }),
+      in: jest
+        .fn()
+        .mockReturnValue({ fetchSockets: jest.fn().mockResolvedValue([]) }),
+      sockets: { sockets: new Map() },
+    };
     (gateway as unknown as { server: typeof server }).server = server;
   });
 
@@ -391,6 +431,320 @@ describe('BoardGateway', () => {
         'note-1',
       );
       expect(toEmit).toHaveBeenCalledWith('note:deleted', { noteId: 'note-1' });
+      expect(ack).toEqual({ ok: true, data: undefined });
+    });
+  });
+
+  describe('onVoteCast', () => {
+    it('vota, confirma al emisor y no difunde tally si liveTally es false', async () => {
+      const client = aClient();
+      votes.cast.mockResolvedValue({ remaining: 2, count: 1 });
+      boards.findByIdOrFail.mockResolvedValue({
+        id: 'board-1',
+        liveTally: false,
+      });
+
+      const ack = await gateway.onVoteCast(client as never, {
+        noteId: 'note-1',
+      });
+
+      expect(votes.cast).toHaveBeenCalledWith('board-1', 'note-1', 'user-1');
+      expect(client.emit).toHaveBeenCalledWith('vote:my-update', {
+        noteId: 'note-1',
+        count: 1,
+        remaining: 2,
+      });
+      expect(votes.tally).not.toHaveBeenCalled();
+      expect(ack).toEqual({ ok: true, data: { remaining: 2 } });
+    });
+
+    it('difunde vote:tally a la sala cuando liveTally es true', async () => {
+      const client = aClient();
+      votes.cast.mockResolvedValue({ remaining: 1, count: 1 });
+      boards.findByIdOrFail.mockResolvedValue({
+        id: 'board-1',
+        liveTally: true,
+      });
+      votes.tally.mockResolvedValue({ 'note-1': 3 });
+      const serverEmit = jest.fn();
+      server.to.mockReturnValue({ emit: serverEmit });
+
+      await gateway.onVoteCast(client as never, { noteId: 'note-1' });
+
+      expect(server.to).toHaveBeenCalledWith(room('board-1'));
+      expect(serverEmit).toHaveBeenCalledWith('vote:tally', {
+        tally: { 'note-1': 3 },
+      });
+    });
+
+    it('devuelve un ack de error cuando el presupuesto está agotado', async () => {
+      const client = aClient();
+      votes.cast.mockRejectedValue(
+        new WsException({
+          code: 'BUDGET_EXCEEDED',
+          message: 'nope',
+          meta: { budget: 3, spent: 3 },
+        }),
+      );
+
+      const ack = await gateway.onVoteCast(client as never, {
+        noteId: 'note-1',
+      });
+
+      expect(ack).toEqual({
+        ok: false,
+        error: {
+          code: 'BUDGET_EXCEEDED',
+          message: 'nope',
+          meta: { budget: 3, spent: 3 },
+        },
+      });
+    });
+  });
+
+  describe('onVoteRetract', () => {
+    it('retira el voto y confirma al emisor', async () => {
+      const client = aClient();
+      votes.retract.mockResolvedValue({ remaining: 3, count: 0 });
+      boards.findByIdOrFail.mockResolvedValue({
+        id: 'board-1',
+        liveTally: false,
+      });
+
+      const ack = await gateway.onVoteRetract(client as never, {
+        noteId: 'note-1',
+      });
+
+      expect(votes.retract).toHaveBeenCalledWith('board-1', 'note-1', 'user-1');
+      expect(client.emit).toHaveBeenCalledWith('vote:my-update', {
+        noteId: 'note-1',
+        count: 0,
+        remaining: 3,
+      });
+      expect(ack).toEqual({ ok: true, data: { remaining: 3 } });
+    });
+  });
+
+  describe('onSessionChangePhase', () => {
+    it('cambia de fase y difunde a toda la sala, incluido el emisor', async () => {
+      const client = aClient();
+      session.changePhase.mockResolvedValue({
+        phase: 'GROUPING',
+        revealed: false,
+      });
+      const serverEmit = jest.fn();
+      server.to.mockReturnValue({ emit: serverEmit });
+
+      const ack = await gateway.onSessionChangePhase(client as never, {
+        phase: 'GROUPING',
+      });
+
+      expect(session.changePhase).toHaveBeenCalledWith(
+        'board-1',
+        'user-1',
+        'GROUPING',
+      );
+      expect(server.to).toHaveBeenCalledWith(room('board-1'));
+      expect(serverEmit).toHaveBeenCalledWith('session:phase-changed', {
+        phase: 'GROUPING',
+        revealed: false,
+      });
+      expect(ack).toEqual({ ok: true, data: undefined });
+    });
+
+    it('devuelve un ack de error en una transición inválida', async () => {
+      const client = aClient();
+      session.changePhase.mockRejectedValue(
+        new WsException({
+          code: 'INVALID_TRANSITION',
+          message: 'nope',
+          meta: { from: 'COLLECTING', to: 'DISCUSSING' },
+        }),
+      );
+
+      const ack = await gateway.onSessionChangePhase(client as never, {
+        phase: 'DISCUSSING',
+      });
+
+      expect(ack.ok).toBe(false);
+    });
+  });
+
+  describe('onSessionStartTimer', () => {
+    it('inicia el temporizador y difunde session:timer-updated', async () => {
+      const client = aClient();
+      session.startTimer.mockResolvedValue({ endsAt: '2026-01-01T00:01:00Z' });
+      const serverEmit = jest.fn();
+      server.to.mockReturnValue({ emit: serverEmit });
+
+      const ack = await gateway.onSessionStartTimer(client as never, {
+        durationSeconds: 60,
+      });
+
+      expect(session.startTimer).toHaveBeenCalledWith('board-1', 'user-1', 60);
+      expect(serverEmit).toHaveBeenCalledWith('session:timer-updated', {
+        endsAt: '2026-01-01T00:01:00Z',
+        paused: false,
+      });
+      expect(ack).toEqual({
+        ok: true,
+        data: { endsAt: '2026-01-01T00:01:00Z' },
+      });
+    });
+  });
+
+  describe('onSessionPauseTimer', () => {
+    it('pausa el temporizador y difunde el estado congelado', async () => {
+      const client = aClient();
+      session.pauseTimer.mockResolvedValue({
+        endsAt: null,
+        paused: true,
+        remainingMs: 4000,
+      });
+      const serverEmit = jest.fn();
+      server.to.mockReturnValue({ emit: serverEmit });
+
+      const ack = await gateway.onSessionPauseTimer(client as never);
+
+      expect(session.pauseTimer).toHaveBeenCalledWith('board-1', 'user-1');
+      expect(serverEmit).toHaveBeenCalledWith('session:timer-updated', {
+        endsAt: null,
+        paused: true,
+        remainingMs: 4000,
+      });
+      expect(ack).toEqual({ ok: true, data: undefined });
+    });
+  });
+
+  describe('onSessionCancelTimer', () => {
+    it('cancela el temporizador y difunde el estado limpio', async () => {
+      const client = aClient();
+      session.cancelTimer.mockResolvedValue({ endsAt: null, paused: false });
+      const serverEmit = jest.fn();
+      server.to.mockReturnValue({ emit: serverEmit });
+
+      const ack = await gateway.onSessionCancelTimer(client as never);
+
+      expect(session.cancelTimer).toHaveBeenCalledWith('board-1', 'user-1');
+      expect(serverEmit).toHaveBeenCalledWith('session:timer-updated', {
+        endsAt: null,
+        paused: false,
+      });
+      expect(ack).toEqual({ ok: true, data: undefined });
+    });
+  });
+
+  describe('onSessionReveal', () => {
+    it('difunde board:revealed y reconstruye board:sync por cada socket conectado', async () => {
+      const client = aClient();
+      session.reveal.mockResolvedValue({ id: 'board-1', revealed: true });
+      const revealEmit = jest.fn();
+      server.to.mockReturnValue({ emit: revealEmit });
+
+      const socketA = {
+        data: { user: { id: 'user-1' }, role: 'owner' },
+        emit: jest.fn(),
+      };
+      const socketB = {
+        data: { user: { id: 'user-2' }, role: 'member' },
+        emit: jest.fn(),
+      };
+      server.in.mockReturnValue({
+        fetchSockets: jest.fn().mockResolvedValue([socketA, socketB]),
+      });
+      snapshot.build.mockImplementation((_boardId, viewerId) => ({
+        board: {},
+        myRole: viewerId,
+      }));
+
+      const ack = await gateway.onSessionReveal(client as never);
+
+      expect(session.reveal).toHaveBeenCalledWith('board-1', 'user-1');
+      expect(server.to).toHaveBeenCalledWith(room('board-1'));
+      expect(revealEmit).toHaveBeenCalledWith('board:revealed', {
+        revealed: true,
+      });
+      expect(server.in).toHaveBeenCalledWith(room('board-1'));
+      expect(snapshot.build).toHaveBeenCalledWith('board-1', 'user-1', 'owner');
+      expect(snapshot.build).toHaveBeenCalledWith(
+        'board-1',
+        'user-2',
+        'member',
+      );
+      expect(socketA.emit).toHaveBeenCalledWith(
+        'board:sync',
+        expect.objectContaining({ myRole: 'user-1' }),
+      );
+      expect(socketB.emit).toHaveBeenCalledWith(
+        'board:sync',
+        expect.objectContaining({ myRole: 'user-2' }),
+      );
+      expect(ack).toEqual({ ok: true, data: undefined });
+    });
+
+    it('ignora sockets sin datos de autenticación completos', async () => {
+      const client = aClient();
+      session.reveal.mockResolvedValue({ id: 'board-1', revealed: true });
+      server.to.mockReturnValue({ emit: jest.fn() });
+      const incompleteSocket = { data: {}, emit: jest.fn() };
+      server.in.mockReturnValue({
+        fetchSockets: jest.fn().mockResolvedValue([incompleteSocket]),
+      });
+
+      await gateway.onSessionReveal(client as never);
+
+      expect(snapshot.build).not.toHaveBeenCalled();
+      expect(incompleteSocket.emit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('onMemberKick', () => {
+    it('expulsa al miembro y desconecta todos sus sockets', async () => {
+      const client = aClient();
+      session.kick.mockResolvedValue(undefined);
+      presence.socketIdsFor.mockReturnValue(['socket-a', 'socket-b']);
+      const targetA = { emit: jest.fn(), disconnect: jest.fn() };
+      const targetB = { emit: jest.fn(), disconnect: jest.fn() };
+      server.sockets.sockets.set('socket-a', targetA);
+      server.sockets.sockets.set('socket-b', targetB);
+
+      const ack = await gateway.onMemberKick(client as never, {
+        userId: 'user-2',
+      });
+
+      expect(session.kick).toHaveBeenCalledWith('board-1', 'user-1', 'user-2');
+      expect(presence.socketIdsFor).toHaveBeenCalledWith('board-1', 'user-2');
+      for (const target of [targetA, targetB]) {
+        expect(target.emit).toHaveBeenCalledWith('board:kicked', {
+          reason: 'KICKED_BY_OWNER',
+        });
+        expect(target.disconnect).toHaveBeenCalledWith(true);
+      }
+      expect(ack).toEqual({ ok: true, data: undefined });
+    });
+
+    it('devuelve un ack de error cuando el owner intenta expulsarse a sí mismo', async () => {
+      const client = aClient();
+      session.kick.mockRejectedValue(
+        new WsException({ code: 'FORBIDDEN_ROLE', message: 'nope' }),
+      );
+
+      const ack = await gateway.onMemberKick(client as never, {
+        userId: 'user-1',
+      });
+
+      expect(ack.ok).toBe(false);
+    });
+
+    it('no falla si el socket ya se desconectó antes del kick', async () => {
+      const client = aClient();
+      session.kick.mockResolvedValue(undefined);
+      presence.socketIdsFor.mockReturnValue(['socket-gone']);
+
+      const ack = await gateway.onMemberKick(client as never, {
+        userId: 'user-2',
+      });
+
       expect(ack).toEqual({ ok: true, data: undefined });
     });
   });

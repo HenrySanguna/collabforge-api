@@ -6,6 +6,7 @@ import { BoardsService } from '../boards/boards.service';
 import type { BoardRole } from '../boards/entities/board-member.entity';
 import { NotesService } from '../notes/notes.service';
 import { NoteSerializerService } from '../notes/note-serializer.service';
+import { VotesService } from '../votes/votes.service';
 import { PresenceService } from './presence.service';
 import type { BoardSnapshot } from '../contracts';
 
@@ -18,6 +19,7 @@ export class BoardSnapshotService {
     private readonly notes: NotesService,
     private readonly serializer: NoteSerializerService,
     private readonly presence: PresenceService,
+    private readonly votes: VotesService,
   ) {}
 
   async build(
@@ -26,9 +28,12 @@ export class BoardSnapshotService {
     viewerRole: BoardRole,
   ): Promise<BoardSnapshot> {
     const board = await this.boards.findByIdOrFail(boardId);
-    const [columns, notes] = await Promise.all([
+    const showTally = board.revealed || board.liveTally;
+    const [columns, notes, myVotes, tally] = await Promise.all([
       this.columns.find({ where: { boardId }, order: { position: 'ASC' } }),
       this.notes.findAllForBoard(boardId),
+      this.votes.myVotes(boardId, viewerId),
+      showTally ? this.votes.tally(boardId) : Promise.resolve(null),
     ]);
 
     return {
@@ -54,8 +59,8 @@ export class BoardSnapshotService {
       notes: notes.map((n) =>
         this.serializer.forViewer(n, board, viewerId, viewerRole),
       ),
-      myVotes: {},
-      tally: null,
+      myVotes,
+      tally,
       participants: this.presence.list(boardId),
       actionItems: [],
       myRole: viewerRole,

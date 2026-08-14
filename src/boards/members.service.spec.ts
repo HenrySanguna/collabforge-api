@@ -10,6 +10,7 @@ describe('MembersService', () => {
     create: jest.Mock;
     save: jest.Mock;
     find: jest.Mock;
+    delete: jest.Mock;
   };
 
   beforeEach(() => {
@@ -18,6 +19,7 @@ describe('MembersService', () => {
       create: jest.fn((input: unknown) => input as BoardMember),
       save: jest.fn(async (m: BoardMember) => ({ ...m, id: 'member-1' })),
       find: jest.fn(),
+      delete: jest.fn().mockResolvedValue({ affected: 1 }),
     };
     service = new MembersService(repo as unknown as Repository<BoardMember>);
   });
@@ -81,5 +83,10 @@ describe('MembersService', () => {
       relations: { user: true },
     });
     expect(result).toEqual([{ id: 'm1' }]);
+  });
+
+  it('remove elimina la membresía por boardId y userId', async () => {
+    await service.remove('b1', 'u1');
+    expect(repo.delete).toHaveBeenCalledWith({ boardId: 'b1', userId: 'u1' });
   });
 });

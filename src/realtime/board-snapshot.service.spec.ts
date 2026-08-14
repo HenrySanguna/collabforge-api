@@ -3,6 +3,7 @@ import { BoardSnapshotService } from './board-snapshot.service';
 import { BoardsService } from '../boards/boards.service';
 import { NotesService } from '../notes/notes.service';
 import { NoteSerializerService } from '../notes/note-serializer.service';
+import { VotesService } from '../votes/votes.service';
 import { PresenceService } from './presence.service';
 import { BoardColumn } from '../boards/entities/board-column.entity';
 import { Board } from '../boards/entities/board.entity';
@@ -33,6 +34,7 @@ describe('BoardSnapshotService', () => {
   let notes: { findAllForBoard: jest.Mock };
   let serializer: { forViewer: jest.Mock };
   let presence: { list: jest.Mock };
+  let votes: { myVotes: jest.Mock; tally: jest.Mock };
 
   beforeEach(() => {
     columnsRepo = { find: jest.fn().mockResolvedValue([]) };
@@ -40,6 +42,10 @@ describe('BoardSnapshotService', () => {
     notes = { findAllForBoard: jest.fn().mockResolvedValue([]) };
     serializer = { forViewer: jest.fn() };
     presence = { list: jest.fn().mockReturnValue([]) };
+    votes = {
+      myVotes: jest.fn().mockResolvedValue({}),
+      tally: jest.fn().mockResolvedValue({}),
+    };
 
     service = new BoardSnapshotService(
       columnsRepo as unknown as Repository<BoardColumn>,
@@ -47,6 +53,7 @@ describe('BoardSnapshotService', () => {
       notes as unknown as NotesService,
       serializer as unknown as NoteSerializerService,
       presence as unknown as PresenceService,
+      votes as unknown as VotesService,
     );
   });
 
@@ -101,5 +108,49 @@ describe('BoardSnapshotService', () => {
     const snapshot = await service.build('board-1', 'user-1', 'owner');
 
     expect(snapshot.board.timerEndsAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+
+  it('incluye myVotes del observador siempre', async () => {
+    votes.myVotes.mockResolvedValue({ 'note-1': 2 });
+
+    const snapshot = await service.build('board-1', 'user-2', 'member');
+
+    expect(votes.myVotes).toHaveBeenCalledWith('board-1', 'user-2');
+    expect(snapshot.myVotes).toEqual({ 'note-1': 2 });
+  });
+
+  it('tally es null cuando el tablero no está revelado ni tiene liveTally', async () => {
+    boards.findByIdOrFail.mockResolvedValue(
+      aBoard({ revealed: false, liveTally: false }),
+    );
+
+    const snapshot = await service.build('board-1', 'user-1', 'member');
+
+    expect(votes.tally).not.toHaveBeenCalled();
+    expect(snapshot.tally).toBeNull();
+  });
+
+  it('tally se calcula cuando el tablero está revelado', async () => {
+    boards.findByIdOrFail.mockResolvedValue(
+      aBoard({ revealed: true, liveTally: false }),
+    );
+    votes.tally.mockResolvedValue({ 'note-1': 5 });
+
+    const snapshot = await service.build('board-1', 'user-1', 'member');
+
+    expect(votes.tally).toHaveBeenCalledWith('board-1');
+    expect(snapshot.tally).toEqual({ 'note-1': 5 });
+  });
+
+  it('tally se calcula cuando liveTally está activo aunque no esté revelado', async () => {
+    boards.findByIdOrFail.mockResolvedValue(
+      aBoard({ revealed: false, liveTally: true }),
+    );
+    votes.tally.mockResolvedValue({ 'note-1': 1 });
+
+    const snapshot = await service.build('board-1', 'user-1', 'member');
+
+    expect(votes.tally).toHaveBeenCalledWith('board-1');
+    expect(snapshot.tally).toEqual({ 'note-1': 1 });
   });
 });

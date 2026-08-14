@@ -28,18 +28,32 @@ import { MembersService } from '../boards/members.service';
 import { BoardsService } from '../boards/boards.service';
 import { NotesService } from '../notes/notes.service';
 import { NoteSerializerService } from '../notes/note-serializer.service';
+import { VotesService } from '../votes/votes.service';
+import { SessionService } from '../session/session.service';
 import { avatarColorFor } from '../auth/avatar-color.util';
 import { CreateNoteDto } from './dto/create-note.dto';
 import { UpdateNoteDto } from './dto/update-note.dto';
 import { MoveNoteDto } from './dto/move-note.dto';
 import { DeleteNoteDto } from './dto/delete-note.dto';
 import { CursorMoveDto } from './dto/cursor-move.dto';
-import type { AuthenticatedSocket } from './types/authenticated-socket.interface';
+import { CastVoteDto } from './dto/cast-vote.dto';
+import { RetractVoteDto } from './dto/retract-vote.dto';
+import { ChangePhaseDto } from './dto/change-phase.dto';
+import { StartTimerDto } from './dto/start-timer.dto';
+import { KickMemberDto } from './dto/kick-member.dto';
 import type {
+  AuthenticatedSocket,
+  SocketData,
+} from './types/authenticated-socket.interface';
+import type {
+  Ack,
   CreateNoteAck,
   UpdateNoteAck,
   MoveNoteAck,
   DeleteNoteAck,
+  CastVoteAck,
+  RetractVoteAck,
+  StartTimerAck,
   ParticipantDto,
 } from '../contracts';
 
@@ -67,6 +81,8 @@ export class BoardGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly serializer: NoteSerializerService,
     private readonly snapshot: BoardSnapshotService,
     private readonly presence: PresenceService,
+    private readonly votes: VotesService,
+    private readonly session: SessionService,
   ) {}
 
   async handleConnection(client: AuthenticatedSocket): Promise<void> {
@@ -107,9 +123,9 @@ export class BoardGateway implements OnGatewayConnection, OnGatewayDisconnect {
         client.id,
       );
       if (isFirstTab) {
-        this.server
-          .to(room(boardId))
-          .emit('presence:updated', { participants: this.presence.list(boardId) });
+        this.server.to(room(boardId)).emit('presence:updated', {
+          participants: this.presence.list(boardId),
+        });
       }
     } catch (err) {
       client.emit('error', toWsErrorPayload(err));
@@ -127,9 +143,9 @@ export class BoardGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.id,
     );
     if (isLastTab) {
-      this.server
-        .to(room(boardId))
-        .emit('presence:updated', { participants: this.presence.list(boardId) });
+      this.server.to(room(boardId)).emit('presence:updated', {
+        participants: this.presence.list(boardId),
+      });
     }
   }
 
@@ -221,5 +237,180 @@ export class BoardGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.volatile
       .to(room(boardId))
       .emit('cursor:moved', { userId: user.id, x: dto.x, y: dto.y });
+  }
+
+  // ── Votos ────────────────────────────────────────────────────
+  @AllowedPhases('VOTING')
+  @SubscribeMessage('vote:cast')
+  async onVoteCast(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() dto: CastVoteDto,
+  ): Promise<CastVoteAck> {
+    const { boardId, user } = requireSocketData(client);
+    try {
+      const result = await this.votes.cast(boardId, dto.noteId, user.id);
+      client.emit('vote:my-update', {
+        noteId: dto.noteId,
+        count: result.count,
+        remaining: result.remaining,
+      });
+      await this.broadcastTallyIfLive(boardId);
+      return { ok: true, data: { remaining: result.remaining } };
+    } catch (err) {
+      return { ok: false, error: toWsErrorPayload(err) };
+    }
+  }
+
+  @AllowedPhases('VOTING')
+  @SubscribeMessage('vote:retract')
+  async onVoteRetract(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() dto: RetractVoteDto,
+  ): Promise<RetractVoteAck> {
+    const { boardId, user } = requireSocketData(client);
+    try {
+      const result = await this.votes.retract(boardId, dto.noteId, user.id);
+      client.emit('vote:my-update', {
+        noteId: dto.noteId,
+        count: result.count,
+        remaining: result.remaining,
+      });
+      await this.broadcastTallyIfLive(boardId);
+      return { ok: true, data: { remaining: result.remaining } };
+    } catch (err) {
+      return { ok: false, error: toWsErrorPayload(err) };
+    }
+  }
+
+  // ── Sesión (solo owner) ─────────────────────────────────────
+  @SubscribeMessage('session:change-phase')
+  async onSessionChangePhase(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() dto: ChangePhaseDto,
+  ): Promise<Ack<void>> {
+    const { boardId, user } = requireSocketData(client);
+    try {
+      const board = await this.session.changePhase(boardId, user.id, dto.phase);
+      this.server.to(room(boardId)).emit('session:phase-changed', {
+        phase: board.phase,
+        revealed: board.revealed,
+      });
+      return { ok: true, data: undefined };
+    } catch (err) {
+      return { ok: false, error: toWsErrorPayload(err) };
+    }
+  }
+
+  @SubscribeMessage('session:start-timer')
+  async onSessionStartTimer(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() dto: StartTimerDto,
+  ): Promise<StartTimerAck> {
+    const { boardId, user } = requireSocketData(client);
+    try {
+      const { endsAt } = await this.session.startTimer(
+        boardId,
+        user.id,
+        dto.durationSeconds,
+      );
+      this.server
+        .to(room(boardId))
+        .emit('session:timer-updated', { endsAt, paused: false });
+      return { ok: true, data: { endsAt } };
+    } catch (err) {
+      return { ok: false, error: toWsErrorPayload(err) };
+    }
+  }
+
+  @SubscribeMessage('session:pause-timer')
+  async onSessionPauseTimer(
+    @ConnectedSocket() client: AuthenticatedSocket,
+  ): Promise<Ack<void>> {
+    const { boardId, user } = requireSocketData(client);
+    try {
+      const state = await this.session.pauseTimer(boardId, user.id);
+      this.server.to(room(boardId)).emit('session:timer-updated', state);
+      return { ok: true, data: undefined };
+    } catch (err) {
+      return { ok: false, error: toWsErrorPayload(err) };
+    }
+  }
+
+  @SubscribeMessage('session:cancel-timer')
+  async onSessionCancelTimer(
+    @ConnectedSocket() client: AuthenticatedSocket,
+  ): Promise<Ack<void>> {
+    const { boardId, user } = requireSocketData(client);
+    try {
+      const state = await this.session.cancelTimer(boardId, user.id);
+      this.server.to(room(boardId)).emit('session:timer-updated', state);
+      return { ok: true, data: undefined };
+    } catch (err) {
+      return { ok: false, error: toWsErrorPayload(err) };
+    }
+  }
+
+  @SubscribeMessage('session:reveal')
+  async onSessionReveal(
+    @ConnectedSocket() client: AuthenticatedSocket,
+  ): Promise<Ack<void>> {
+    const { boardId, user } = requireSocketData(client);
+    try {
+      await this.session.reveal(boardId, user.id);
+      this.server.to(room(boardId)).emit('board:revealed', { revealed: true });
+
+      // board:sync carries viewer-scoped fields (myRole, myVotes...), so it can't be
+      // broadcast as a single room-wide payload. Instead we rebuild it once per
+      // currently connected socket, using socket.io's own room membership lookup.
+      const sockets = await this.server.in(room(boardId)).fetchSockets();
+      await Promise.all(
+        sockets.map(async (socket) => {
+          const data = socket.data as Partial<SocketData>;
+          if (!data.user || !data.role) return;
+          const viewerSnapshot = await this.snapshot.build(
+            boardId,
+            data.user.id,
+            data.role,
+          );
+          socket.emit('board:sync', viewerSnapshot);
+        }),
+      );
+
+      return { ok: true, data: undefined };
+    } catch (err) {
+      return { ok: false, error: toWsErrorPayload(err) };
+    }
+  }
+
+  @SubscribeMessage('member:kick')
+  async onMemberKick(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() dto: KickMemberDto,
+  ): Promise<Ack<void>> {
+    const { boardId, user } = requireSocketData(client);
+    try {
+      await this.session.kick(boardId, user.id, dto.userId);
+
+      const socketIds = this.presence.socketIdsFor(boardId, dto.userId);
+      for (const socketId of socketIds) {
+        const target = this.server.sockets.sockets.get(socketId);
+        if (!target) continue;
+        target.emit('board:kicked', { reason: 'KICKED_BY_OWNER' });
+        // Disconnecting triggers the existing handleDisconnect → presence removal
+        // → presence:updated flow; no need to broadcast that separately here.
+        target.disconnect(true);
+      }
+
+      return { ok: true, data: undefined };
+    } catch (err) {
+      return { ok: false, error: toWsErrorPayload(err) };
+    }
+  }
+
+  private async broadcastTallyIfLive(boardId: string): Promise<void> {
+    const board = await this.boards.findByIdOrFail(boardId);
+    if (!board.liveTally) return;
+    const tally = await this.votes.tally(boardId);
+    this.server.to(room(boardId)).emit('vote:tally', { tally });
   }
 }

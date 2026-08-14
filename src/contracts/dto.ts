@@ -104,3 +104,40 @@ export interface CursorMovedPayload {
   x: number;
   y: number;
 }
+
+export interface CastVotePayload {
+  noteId: string;
+}
+
+export interface RetractVotePayload {
+  noteId: string;
+}
+
+export interface ChangePhasePayload {
+  phase: BoardPhase;
+}
+
+export interface StartTimerPayload {
+  durationSeconds: number;
+}
+
+export interface KickPayload {
+  userId: string;
+}
+
+export interface PhaseChangedPayload {
+  phase: BoardPhase;
+  revealed: boolean;
+}
+
+export interface TimerUpdatedPayload {
+  endsAt: string | null;
+  paused: boolean;
+  remainingMs?: number;
+}
+
+export interface VoteMyUpdatePayload {
+  noteId: string;
+  count: number;
+  remaining: number;
+}

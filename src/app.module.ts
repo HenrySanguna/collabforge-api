@@ -18,7 +18,13 @@ import { RealtimeModule } from './realtime/realtime.module';
       load: [configuration],
       validate,
     }),
-    ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 100 }]),
+    ThrottlerModule.forRoot({
+      throttlers: [{ name: 'default', ttl: 60_000, limit: 100 }],
+      // e2e specs register many users against the same in-memory IP bucket within
+      // a single spec file; NODE_ENV=test (set by CI's e2e job and expected locally
+      // when running pnpm test:e2e) relaxes throttling without touching prod/dev.
+      skipIf: () => process.env.NODE_ENV === 'test',
+    }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({

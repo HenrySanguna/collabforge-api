@@ -58,4 +58,8 @@ export class MembersService {
   list(boardId: string): Promise<BoardMember[]> {
     return this.members.find({ where: { boardId }, relations: { user: true } });
   }
+
+  async remove(boardId: string, userId: string): Promise<void> {
+    await this.members.delete({ boardId, userId });
+  }
 }

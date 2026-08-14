@@ -10,6 +10,9 @@ export type ErrorCode =
   | 'NOTE_NOT_FOUND'
   | 'VALIDATION_ERROR'
   | 'CONNECTION_REJECTED'
+  | 'INVALID_TRANSITION'
+  | 'BUDGET_EXCEEDED'
+  | 'ALREADY_VOTED'
   | 'INTERNAL_ERROR';
 
 export interface WsErrorPayload {

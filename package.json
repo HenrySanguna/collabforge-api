@@ -123,6 +123,14 @@
       "./src/auth/": {
         "lines": 95,
         "branches": 80
+      },
+      "./src/votes/": {
+        "lines": 95,
+        "branches": 80
+      },
+      "./src/session/": {
+        "lines": 95,
+        "branches": 80
       }
     },
     "coverageDirectory": "../coverage",

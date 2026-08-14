@@ -104,4 +104,24 @@ describe('PresenceService', () => {
   it('list() de un tablero desconocido devuelve []', () => {
     expect(service.list('unknown-board')).toEqual([]);
   });
+
+  describe('socketIdsFor', () => {
+    it('devuelve todos los sockets abiertos de un usuario', () => {
+      service.addConnection('board-1', aParticipant(), 'socket-1');
+      service.addConnection('board-1', aParticipant(), 'socket-2');
+
+      expect(service.socketIdsFor('board-1', 'user-1').sort()).toEqual([
+        'socket-1',
+        'socket-2',
+      ]);
+    });
+
+    it('devuelve [] para un usuario sin conexiones', () => {
+      expect(service.socketIdsFor('board-1', 'user-1')).toEqual([]);
+    });
+
+    it('devuelve [] para un tablero desconocido', () => {
+      expect(service.socketIdsFor('unknown-board', 'user-1')).toEqual([]);
+    });
+  });
 });

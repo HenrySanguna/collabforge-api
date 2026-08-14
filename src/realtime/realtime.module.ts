@@ -7,6 +7,9 @@ import { Note } from '../notes/entities/note.entity';
 import { BoardColumn } from '../boards/entities/board-column.entity';
 import { NotesService } from '../notes/notes.service';
 import { NoteSerializerService } from '../notes/note-serializer.service';
+import { Vote } from '../votes/entities/vote.entity';
+import { VotesService } from '../votes/votes.service';
+import { SessionService } from '../session/session.service';
 import { WsAuthService } from './ws-auth.service';
 import { WsJwtGuard } from './guards/ws-jwt.guard';
 import { PhaseGuard } from './guards/phase.guard';
@@ -19,11 +22,13 @@ import { BoardGateway } from './board.gateway';
     UsersModule,
     BoardsModule,
     JwtModule.register({}),
-    TypeOrmModule.forFeature([Note, BoardColumn]),
+    TypeOrmModule.forFeature([Note, BoardColumn, Vote]),
   ],
   providers: [
     NotesService,
     NoteSerializerService,
+    VotesService,
+    SessionService,
     WsAuthService,
     WsJwtGuard,
     PhaseGuard,
@@ -31,5 +36,6 @@ import { BoardGateway } from './board.gateway';
     PresenceService,
     BoardGateway,
   ],
+  exports: [VotesService],
 })
 export class RealtimeModule {}
