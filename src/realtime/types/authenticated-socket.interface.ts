@@ -7,6 +7,10 @@ export interface SocketData {
   user: AuthUser;
   boardId: string;
   role: BoardRole;
+  /** Correlation root for this connection's lifetime; seeded on connect, reused by every WS event's correlationId. */
+  rootId?: string;
+  /** `Date.now()` at successful `handleConnection`, used to compute board session duration on disconnect. */
+  connectedAt?: number;
 }
 
 // Socket.IO tipa sus eventos como firmas de listener; los contratos

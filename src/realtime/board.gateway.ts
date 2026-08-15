@@ -11,9 +11,11 @@ import {
 import {
   UseFilters,
   UseGuards,
+  UseInterceptors,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import type { Server } from 'socket.io';
 import { WsAuthService } from './ws-auth.service';
 import { WsJwtGuard } from './guards/ws-jwt.guard';
@@ -24,12 +26,18 @@ import { BoardSnapshotService } from './board-snapshot.service';
 import { PresenceService } from './presence.service';
 import { toWsErrorPayload } from './ws-error.util';
 import { requireSocketData } from './socket-data.util';
+import { MetricsService } from '../observability/metrics.service';
+import { WsObservabilityInterceptor } from '../observability/ws-observability.interceptor';
 import { MembersService } from '../boards/members.service';
 import { BoardsService } from '../boards/boards.service';
 import { NotesService } from '../notes/notes.service';
 import { NoteSerializerService } from '../notes/note-serializer.service';
 import { VotesService } from '../votes/votes.service';
 import { SessionService } from '../session/session.service';
+import {
+  ActionItemsService,
+  toActionItemDto,
+} from '../action-items/action-items.service';
 import { avatarColorFor } from '../auth/avatar-color.util';
 import { CreateNoteDto } from './dto/create-note.dto';
 import { UpdateNoteDto } from './dto/update-note.dto';
@@ -41,6 +49,9 @@ import { RetractVoteDto } from './dto/retract-vote.dto';
 import { ChangePhaseDto } from './dto/change-phase.dto';
 import { StartTimerDto } from './dto/start-timer.dto';
 import { KickMemberDto } from './dto/kick-member.dto';
+import { CreateActionItemDto } from './dto/create-action-item.dto';
+import { UpdateActionItemDto } from './dto/update-action-item.dto';
+import { DeleteActionItemDto } from './dto/delete-action-item.dto';
 import type {
   AuthenticatedSocket,
   SocketData,
@@ -55,6 +66,9 @@ import type {
   RetractVoteAck,
   StartTimerAck,
   ParticipantDto,
+  CreateActionItemAck,
+  UpdateActionItemAck,
+  DeleteActionItemAck,
 } from '../contracts';
 
 export function room(boardId: string): string {
@@ -69,6 +83,7 @@ export function room(boardId: string): string {
 })
 @UseGuards(WsJwtGuard, PhaseGuard)
 @UseFilters(WsExceptionFilter)
+@UseInterceptors(WsObservabilityInterceptor)
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class BoardGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer() private readonly server!: Server;
@@ -83,6 +98,8 @@ export class BoardGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly presence: PresenceService,
     private readonly votes: VotesService,
     private readonly session: SessionService,
+    private readonly actionItems: ActionItemsService,
+    private readonly metrics: MetricsService,
   ) {}
 
   async handleConnection(client: AuthenticatedSocket): Promise<void> {
@@ -103,6 +120,11 @@ export class BoardGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.data.user = user;
       client.data.boardId = boardId;
       client.data.role = membership.role;
+      client.data.rootId =
+        (client.handshake.auth?.correlationId as string | undefined) ||
+        randomUUID();
+      client.data.connectedAt = Date.now();
+      this.metrics.incConnection();
       await client.join(room(boardId));
 
       client.emit(
@@ -134,8 +156,15 @@ export class BoardGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   handleDisconnect(client: AuthenticatedSocket): void {
-    const { boardId, user } = client.data;
+    const { boardId, user, connectedAt } = client.data;
     if (!boardId || !user) return;
+
+    this.metrics.decConnection();
+    if (connectedAt) {
+      this.metrics.recordBoardSessionDuration(
+        (Date.now() - connectedAt) / 1000,
+      );
+    }
 
     const isLastTab = this.presence.removeConnection(
       boardId,
@@ -401,6 +430,57 @@ export class BoardGateway implements OnGatewayConnection, OnGatewayDisconnect {
         target.disconnect(true);
       }
 
+      return { ok: true, data: undefined };
+    } catch (err) {
+      return { ok: false, error: toWsErrorPayload(err) };
+    }
+  }
+
+  // ── Action items (solo owner, solo DISCUSSING) ──────────────
+  @AllowedPhases('DISCUSSING')
+  @SubscribeMessage('action-item:create')
+  async onActionItemCreate(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() dto: CreateActionItemDto,
+  ): Promise<CreateActionItemAck> {
+    const { boardId, user } = requireSocketData(client);
+    try {
+      const item = await this.actionItems.create(boardId, user.id, dto);
+      const payload = toActionItemDto(item);
+      client.to(room(boardId)).emit('action-item:created', payload);
+      return { ok: true, data: { item: payload } };
+    } catch (err) {
+      return { ok: false, error: toWsErrorPayload(err) };
+    }
+  }
+
+  @AllowedPhases('DISCUSSING')
+  @SubscribeMessage('action-item:update')
+  async onActionItemUpdate(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() dto: UpdateActionItemDto,
+  ): Promise<UpdateActionItemAck> {
+    const { boardId, user } = requireSocketData(client);
+    try {
+      const item = await this.actionItems.update(boardId, user.id, dto);
+      const payload = toActionItemDto(item);
+      client.to(room(boardId)).emit('action-item:updated', payload);
+      return { ok: true, data: { item: payload } };
+    } catch (err) {
+      return { ok: false, error: toWsErrorPayload(err) };
+    }
+  }
+
+  @AllowedPhases('DISCUSSING')
+  @SubscribeMessage('action-item:delete')
+  async onActionItemDelete(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() dto: DeleteActionItemDto,
+  ): Promise<DeleteActionItemAck> {
+    const { boardId, user } = requireSocketData(client);
+    try {
+      await this.actionItems.remove(boardId, user.id, dto.id);
+      client.to(room(boardId)).emit('action-item:deleted', { id: dto.id });
       return { ok: true, data: undefined };
     } catch (err) {
       return { ok: false, error: toWsErrorPayload(err) };

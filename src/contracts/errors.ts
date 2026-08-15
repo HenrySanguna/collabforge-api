@@ -13,6 +13,7 @@ export type ErrorCode =
   | 'INVALID_TRANSITION'
   | 'BUDGET_EXCEEDED'
   | 'ALREADY_VOTED'
+  | 'ACTION_ITEM_NOT_FOUND'
   | 'INTERNAL_ERROR';
 
 export interface WsErrorPayload {

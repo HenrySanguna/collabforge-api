@@ -11,6 +11,7 @@ export const validationSchema = z.object({
   INVITE_SECRET: z.string().min(32),
   CORS_ORIGINS: z.string(),
   REDIS_URL: z.url().optional(),
+  METRICS_TOKEN: z.string().optional(),
 });
 
 export type EnvConfig = z.infer<typeof validationSchema>;
