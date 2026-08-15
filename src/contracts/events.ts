@@ -18,6 +18,10 @@ import type {
   PhaseChangedPayload,
   TimerUpdatedPayload,
   VoteMyUpdatePayload,
+  ActionItemDto,
+  CreateActionItemPayload,
+  UpdateActionItemPayload,
+  DeleteActionItemPayload,
 } from './dto';
 
 export interface ClientEvents {
@@ -34,6 +38,9 @@ export interface ClientEvents {
   'session:cancel-timer': void;
   'session:reveal': void;
   'member:kick': KickPayload;
+  'action-item:create': CreateActionItemPayload;
+  'action-item:update': UpdateActionItemPayload;
+  'action-item:delete': DeleteActionItemPayload;
 }
 
 export interface ServerEvents {
@@ -50,6 +57,9 @@ export interface ServerEvents {
   'board:kicked': { reason: 'KICKED_BY_OWNER' };
   'vote:tally': { tally: Record<string, number> };
   'vote:my-update': VoteMyUpdatePayload;
+  'action-item:created': ActionItemDto;
+  'action-item:updated': ActionItemDto;
+  'action-item:deleted': { id: string };
   error: WsErrorPayload;
 }
 
@@ -60,5 +70,8 @@ export type DeleteNoteAck = Ack<void>;
 export type CastVoteAck = Ack<{ remaining: number }>;
 export type RetractVoteAck = Ack<{ remaining: number }>;
 export type StartTimerAck = Ack<{ endsAt: string }>;
+export type CreateActionItemAck = Ack<{ item: ActionItemDto }>;
+export type UpdateActionItemAck = Ack<{ item: ActionItemDto }>;
+export type DeleteActionItemAck = Ack<void>;
 
-export const CONTRACTS_VERSION = '1.2.0';
+export const CONTRACTS_VERSION = '1.3.0';

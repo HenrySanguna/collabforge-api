@@ -10,6 +10,8 @@ import type { NotesService } from '../notes/notes.service';
 import type { NoteSerializerService } from '../notes/note-serializer.service';
 import type { VotesService } from '../votes/votes.service';
 import type { SessionService } from '../session/session.service';
+import type { ActionItemsService } from '../action-items/action-items.service';
+import type { MetricsService } from '../observability/metrics.service';
 
 function aClient(dataOverrides: object = {}) {
   return {
@@ -60,6 +62,16 @@ describe('BoardGateway', () => {
     reveal: jest.Mock;
     kick: jest.Mock;
   };
+  let actionItems: {
+    create: jest.Mock;
+    update: jest.Mock;
+    remove: jest.Mock;
+  };
+  let metrics: {
+    incConnection: jest.Mock;
+    decConnection: jest.Mock;
+    recordBoardSessionDuration: jest.Mock;
+  };
   let server: {
     to: jest.Mock;
     in: jest.Mock;
@@ -106,6 +118,16 @@ describe('BoardGateway', () => {
       reveal: jest.fn(),
       kick: jest.fn(),
     };
+    actionItems = {
+      create: jest.fn(),
+      update: jest.fn(),
+      remove: jest.fn(),
+    };
+    metrics = {
+      incConnection: jest.fn(),
+      decConnection: jest.fn(),
+      recordBoardSessionDuration: jest.fn(),
+    };
 
     gateway = new BoardGateway(
       wsAuth as unknown as WsAuthService,
@@ -117,6 +139,8 @@ describe('BoardGateway', () => {
       presence as unknown as PresenceService,
       votes as unknown as VotesService,
       session as unknown as SessionService,
+      actionItems as unknown as ActionItemsService,
+      metrics as unknown as MetricsService,
     );
 
     server = {
@@ -255,6 +279,90 @@ describe('BoardGateway', () => {
 
       expect(server.to).not.toHaveBeenCalled();
     });
+
+    it('incrementa el gauge de conexiones activas al conectar exitosamente', async () => {
+      const client = aClient({
+        user: undefined,
+        boardId: undefined,
+        role: undefined,
+      });
+      wsAuth.verify.mockResolvedValue({
+        id: 'user-1',
+        email: 'ana@test.com',
+        name: 'Ana',
+      });
+      boards.findByIdOrFail.mockResolvedValue({ id: 'board-1' });
+      members.requireMembership.mockResolvedValue({ role: 'owner' });
+
+      await gateway.handleConnection(client as never);
+
+      expect(metrics.incConnection).toHaveBeenCalledTimes(1);
+    });
+
+    it('no incrementa el gauge si la autenticación falla', async () => {
+      const client = aClient({
+        user: undefined,
+        boardId: undefined,
+        role: undefined,
+      });
+      wsAuth.verify.mockRejectedValue(new Error('bad token'));
+
+      await gateway.handleConnection(client as never);
+
+      expect(metrics.incConnection).not.toHaveBeenCalled();
+    });
+
+    it('siembra rootId desde handshake.auth.correlationId cuando está presente', async () => {
+      const client = {
+        id: 'socket-1',
+        data: { user: undefined, boardId: undefined, role: undefined },
+        handshake: {
+          auth: { token: 'valid-token', correlationId: 'incoming-root' },
+          query: { boardId: 'board-1' },
+        },
+        join: jest.fn().mockResolvedValue(undefined),
+        emit: jest.fn(),
+        disconnect: jest.fn(),
+      };
+      wsAuth.verify.mockResolvedValue({
+        id: 'user-1',
+        email: 'ana@test.com',
+        name: 'Ana',
+      });
+      boards.findByIdOrFail.mockResolvedValue({ id: 'board-1' });
+      members.requireMembership.mockResolvedValue({ role: 'owner' });
+
+      await gateway.handleConnection(client as never);
+
+      expect(client.data).toMatchObject({ rootId: 'incoming-root' });
+    });
+
+    it('genera un rootId propio si el handshake no trae uno', async () => {
+      const client = {
+        id: 'socket-1',
+        data: { user: undefined, boardId: undefined, role: undefined },
+        handshake: {
+          auth: { token: 'valid-token' },
+          query: { boardId: 'board-1' },
+        },
+        join: jest.fn().mockResolvedValue(undefined),
+        emit: jest.fn(),
+        disconnect: jest.fn(),
+      };
+      wsAuth.verify.mockResolvedValue({
+        id: 'user-1',
+        email: 'ana@test.com',
+        name: 'Ana',
+      });
+      boards.findByIdOrFail.mockResolvedValue({ id: 'board-1' });
+      members.requireMembership.mockResolvedValue({ role: 'owner' });
+
+      await gateway.handleConnection(client as never);
+
+      const seededData = client.data as unknown as { rootId?: string };
+      expect(typeof seededData.rootId).toBe('string');
+      expect(seededData.rootId?.length).toBeGreaterThan(0);
+    });
   });
 
   describe('handleDisconnect', () => {
@@ -298,6 +406,28 @@ describe('BoardGateway', () => {
       expect(() => gateway.handleDisconnect(client as never)).not.toThrow();
       expect(presence.removeConnection).not.toHaveBeenCalled();
       expect(server.to).not.toHaveBeenCalled();
+      expect(metrics.decConnection).not.toHaveBeenCalled();
+    });
+
+    it('decrementa el gauge y registra la duración de la sesión cuando el socket tenía datos', () => {
+      const client = aClient({ connectedAt: Date.now() - 1000 });
+
+      gateway.handleDisconnect(client as never);
+
+      expect(metrics.decConnection).toHaveBeenCalledTimes(1);
+      expect(metrics.recordBoardSessionDuration).toHaveBeenCalledTimes(1);
+      const [durationSeconds] =
+        metrics.recordBoardSessionDuration.mock.calls[0];
+      expect(durationSeconds).toBeGreaterThanOrEqual(0);
+    });
+
+    it('no registra duración de sesión si no había connectedAt en el socket', () => {
+      const client = aClient();
+
+      gateway.handleDisconnect(client as never);
+
+      expect(metrics.decConnection).toHaveBeenCalledTimes(1);
+      expect(metrics.recordBoardSessionDuration).not.toHaveBeenCalled();
     });
   });
 
@@ -745,6 +875,107 @@ describe('BoardGateway', () => {
         userId: 'user-2',
       });
 
+      expect(ack).toEqual({ ok: true, data: undefined });
+    });
+  });
+
+  describe('onActionItemCreate', () => {
+    it('crea el action item y difunde action-item:created', async () => {
+      const client = aClient({ role: 'owner' });
+      actionItems.create.mockResolvedValue({
+        id: 'item-1',
+        text: 'Follow up',
+        assigneeId: null,
+        status: 'open',
+        createdBy: 'user-1',
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+      });
+      const toEmit = jest.fn();
+      client.to.mockReturnValue({ emit: toEmit });
+
+      const ack = await gateway.onActionItemCreate(client as never, {
+        text: 'Follow up',
+      });
+
+      expect(actionItems.create).toHaveBeenCalledWith('board-1', 'user-1', {
+        text: 'Follow up',
+      });
+      expect(toEmit).toHaveBeenCalledWith(
+        'action-item:created',
+        expect.objectContaining({ id: 'item-1', status: 'open' }),
+      );
+      expect(ack).toEqual({
+        ok: true,
+        data: {
+          item: expect.objectContaining({ id: 'item-1' }) as unknown,
+        },
+      });
+    });
+
+    it('devuelve un ack de error cuando el service rechaza', async () => {
+      const client = aClient({ role: 'member' });
+      actionItems.create.mockRejectedValue(
+        new WsException({ code: 'FORBIDDEN_ROLE', message: 'nope' }),
+      );
+
+      const ack = await gateway.onActionItemCreate(client as never, {
+        text: 'Follow up',
+      });
+
+      expect(ack.ok).toBe(false);
+    });
+  });
+
+  describe('onActionItemUpdate', () => {
+    it('actualiza el action item y difunde action-item:updated', async () => {
+      const client = aClient({ role: 'owner' });
+      actionItems.update.mockResolvedValue({
+        id: 'item-1',
+        text: 'Follow up',
+        assigneeId: null,
+        status: 'done',
+        createdBy: 'user-1',
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+      });
+      const toEmit = jest.fn();
+      client.to.mockReturnValue({ emit: toEmit });
+
+      const ack = await gateway.onActionItemUpdate(client as never, {
+        id: 'item-1',
+        status: 'done',
+      });
+
+      expect(actionItems.update).toHaveBeenCalledWith('board-1', 'user-1', {
+        id: 'item-1',
+        status: 'done',
+      });
+      expect(toEmit).toHaveBeenCalledWith(
+        'action-item:updated',
+        expect.objectContaining({ id: 'item-1', status: 'done' }),
+      );
+      expect(ack.ok).toBe(true);
+    });
+  });
+
+  describe('onActionItemDelete', () => {
+    it('elimina el action item y difunde action-item:deleted', async () => {
+      const client = aClient({ role: 'owner' });
+      actionItems.remove.mockResolvedValue(undefined);
+      const toEmit = jest.fn();
+      client.to.mockReturnValue({ emit: toEmit });
+
+      const ack = await gateway.onActionItemDelete(client as never, {
+        id: 'item-1',
+      });
+
+      expect(actionItems.remove).toHaveBeenCalledWith(
+        'board-1',
+        'user-1',
+        'item-1',
+      );
+      expect(toEmit).toHaveBeenCalledWith('action-item:deleted', {
+        id: 'item-1',
+      });
       expect(ack).toEqual({ ok: true, data: undefined });
     });
   });

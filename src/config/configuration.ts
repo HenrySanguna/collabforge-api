@@ -12,5 +12,6 @@ export default function configuration(): EnvConfig {
     INVITE_SECRET: process.env.INVITE_SECRET!,
     CORS_ORIGINS: process.env.CORS_ORIGINS!,
     REDIS_URL: process.env.REDIS_URL,
+    METRICS_TOKEN: process.env.METRICS_TOKEN,
   };
 }

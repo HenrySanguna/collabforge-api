@@ -34,4 +34,16 @@ describe('validate', () => {
       validate({ ...validEnv, DATABASE_URL: 'no-es-una-url' }),
     ).toThrow();
   });
+
+  it('METRICS_TOKEN es opcional y queda undefined si no se define', () => {
+    const config = validate(validEnv);
+
+    expect(config.METRICS_TOKEN).toBeUndefined();
+  });
+
+  it('acepta METRICS_TOKEN cuando se define', () => {
+    const config = validate({ ...validEnv, METRICS_TOKEN: 'secret-token' });
+
+    expect(config.METRICS_TOKEN).toBe('secret-token');
+  });
 });

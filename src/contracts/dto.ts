@@ -37,7 +37,26 @@ export interface ParticipantDto {
 export interface ActionItemDto {
   id: string;
   text: string;
-  isDone: boolean;
+  assigneeId: string | null;
+  status: 'open' | 'done';
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface CreateActionItemPayload {
+  text: string;
+  assigneeId?: string | null;
+}
+
+export interface UpdateActionItemPayload {
+  id: string;
+  text?: string;
+  assigneeId?: string | null;
+  status?: 'open' | 'done';
+}
+
+export interface DeleteActionItemPayload {
+  id: string;
 }
 
 export interface BoardSnapshot {

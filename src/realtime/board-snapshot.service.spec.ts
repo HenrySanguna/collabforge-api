@@ -8,6 +8,8 @@ import { PresenceService } from './presence.service';
 import { BoardColumn } from '../boards/entities/board-column.entity';
 import { Board } from '../boards/entities/board.entity';
 import { Note } from '../notes/entities/note.entity';
+import { ActionItemsService } from '../action-items/action-items.service';
+import { ActionItem } from '../action-items/entities/action-item.entity';
 import type { ParticipantDto } from '../contracts';
 
 function aBoard(overrides: Partial<Board> = {}): Board {
@@ -35,6 +37,7 @@ describe('BoardSnapshotService', () => {
   let serializer: { forViewer: jest.Mock };
   let presence: { list: jest.Mock };
   let votes: { myVotes: jest.Mock; tally: jest.Mock };
+  let actionItems: { findAllForBoard: jest.Mock };
 
   beforeEach(() => {
     columnsRepo = { find: jest.fn().mockResolvedValue([]) };
@@ -46,6 +49,7 @@ describe('BoardSnapshotService', () => {
       myVotes: jest.fn().mockResolvedValue({}),
       tally: jest.fn().mockResolvedValue({}),
     };
+    actionItems = { findAllForBoard: jest.fn().mockResolvedValue([]) };
 
     service = new BoardSnapshotService(
       columnsRepo as unknown as Repository<BoardColumn>,
@@ -54,6 +58,7 @@ describe('BoardSnapshotService', () => {
       serializer as unknown as NoteSerializerService,
       presence as unknown as PresenceService,
       votes as unknown as VotesService,
+      actionItems as unknown as ActionItemsService,
     );
   });
 
@@ -152,5 +157,41 @@ describe('BoardSnapshotService', () => {
 
     expect(votes.tally).toHaveBeenCalledWith('board-1');
     expect(snapshot.tally).toEqual({ 'note-1': 1 });
+  });
+
+  it('incluye los action items persistidos, mapeados a ActionItemDto', async () => {
+    actionItems.findAllForBoard.mockResolvedValue([
+      {
+        id: 'item-1',
+        boardId: 'board-1',
+        text: 'Follow up',
+        assigneeId: null,
+        status: 'open',
+        createdBy: 'user-1',
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+      } as ActionItem,
+    ]);
+
+    const snapshot = await service.build('board-1', 'user-1', 'owner');
+
+    expect(actionItems.findAllForBoard).toHaveBeenCalledWith('board-1');
+    expect(snapshot.actionItems).toEqual([
+      {
+        id: 'item-1',
+        text: 'Follow up',
+        assigneeId: null,
+        status: 'open',
+        createdBy: 'user-1',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    ]);
+  });
+
+  it('devuelve actionItems vacío cuando el board no tiene ninguno', async () => {
+    actionItems.findAllForBoard.mockResolvedValue([]);
+
+    const snapshot = await service.build('board-1', 'user-1', 'owner');
+
+    expect(snapshot.actionItems).toEqual([]);
   });
 });
