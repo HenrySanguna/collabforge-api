@@ -66,13 +66,13 @@ describe('AuthController', () => {
       'refresh-token',
       expect.objectContaining({
         httpOnly: true,
-        sameSite: 'strict',
+        sameSite: 'lax',
         path: '/api/auth/refresh',
       }),
     );
   });
 
-  it('register: secure=false fuera de producción', async () => {
+  it('register: secure=false y sameSite=lax fuera de producción', async () => {
     const res = mockResponse();
     await controller.register(
       { email: 'a@test.com', password: 'Password123', name: 'A' },
@@ -81,11 +81,11 @@ describe('AuthController', () => {
     expect(res.cookie).toHaveBeenCalledWith(
       'cf_rt',
       expect.anything(),
-      expect.objectContaining({ secure: false }),
+      expect.objectContaining({ secure: false, sameSite: 'lax' }),
     );
   });
 
-  it('register: secure=true en producción', async () => {
+  it('register: secure=true y sameSite=none en producción', async () => {
     config.NODE_ENV = 'production';
     const res = mockResponse();
     await controller.register(
@@ -95,7 +95,7 @@ describe('AuthController', () => {
     expect(res.cookie).toHaveBeenCalledWith(
       'cf_rt',
       expect.anything(),
-      expect.objectContaining({ secure: true }),
+      expect.objectContaining({ secure: true, sameSite: 'none' }),
     );
   });
 
