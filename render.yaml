@@ -7,7 +7,6 @@ services:
     plan: free
     region: frankfurt
     healthCheckPath: /health
-    preDeployCommand: pnpm run migration:run
     envVars:
       - key: NODE_ENV
         value: production
