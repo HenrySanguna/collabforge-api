@@ -95,10 +95,15 @@ export class AuthController {
   }
 
   private respondWithSession(res: Response, session: AuthSession) {
+    const isProduction = this.config.get('NODE_ENV') === 'production';
     res.cookie(REFRESH_COOKIE, session.refreshToken, {
       httpOnly: true,
-      secure: this.config.get('NODE_ENV') === 'production',
-      sameSite: 'strict',
+      secure: isProduction,
+      // 'none' es obligatorio para que el navegador reenvíe la cookie en la
+      // petición cross-site desde el frontend (dominio distinto al de la API);
+      // requiere secure:true, por eso va ligado a isProduction. En local
+      // (mismo sitio, distinto puerto) 'lax' basta y no exige secure.
+      sameSite: isProduction ? 'none' : 'lax',
       path: REFRESH_COOKIE_PATH,
       maxAge: durationToMs(this.config.getOrThrow<string>('JWT_REFRESH_TTL')),
     });
