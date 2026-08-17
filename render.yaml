@@ -19,4 +19,4 @@ services:
       - key: INVITE_SECRET
         generateValue: true
       - key: CORS_ORIGINS
-        value: https://collabforge.pages.dev
+        value: https://develop-collabforge-web.henrysanguna.workers.dev
