@@ -7,7 +7,7 @@ import type { AuthorDto, NoteDto } from '../contracts';
 @Injectable()
 export class NoteSerializerService {
   forOthers(note: Note, board: Board): NoteDto {
-    const hideAuthor = !board.revealed && board.phase === 'COLLECTING';
+    const hideAuthor = !board.revealed && board.phase !== 'DISCUSSING';
     return this.toDto(note, hideAuthor);
   }
 

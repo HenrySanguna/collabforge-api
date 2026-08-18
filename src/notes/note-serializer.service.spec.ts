@@ -46,9 +46,31 @@ describe('NoteSerializerService', () => {
       });
     });
 
-    it('muestra la autoría fuera de COLLECTING', () => {
-      const dto = serializer.forOthers(aNote(), aBoard({ phase: 'GROUPING' }));
-      expect(dto.author).not.toBeNull();
+    it('sigue ocultando la autoría en GROUPING y VOTING mientras no esté revelada', () => {
+      expect(
+        serializer.forOthers(aNote(), aBoard({ phase: 'GROUPING' })).author,
+      ).toBeNull();
+      expect(
+        serializer.forOthers(aNote(), aBoard({ phase: 'VOTING' })).author,
+      ).toBeNull();
+    });
+
+    it('muestra la autoría en GROUPING y VOTING una vez revelada', () => {
+      expect(
+        serializer.forOthers(aNote(), aBoard({ phase: 'GROUPING', revealed: true }))
+          .author,
+      ).not.toBeNull();
+      expect(
+        serializer.forOthers(aNote(), aBoard({ phase: 'VOTING', revealed: true }))
+          .author,
+      ).not.toBeNull();
+    });
+
+    it('siempre muestra la autoría en DISCUSSING, revelado o no', () => {
+      expect(
+        serializer.forOthers(aNote(), aBoard({ phase: 'DISCUSSING', revealed: false }))
+          .author,
+      ).not.toBeNull();
     });
   });
 
