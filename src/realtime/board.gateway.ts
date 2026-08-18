@@ -16,7 +16,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import type { Server } from 'socket.io';
+import type { Namespace } from 'socket.io';
 import { WsAuthService } from './ws-auth.service';
 import { WsJwtGuard } from './guards/ws-jwt.guard';
 import { PhaseGuard } from './guards/phase.guard';
@@ -86,7 +86,7 @@ export function room(boardId: string): string {
 @UseInterceptors(WsObservabilityInterceptor)
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class BoardGateway implements OnGatewayConnection, OnGatewayDisconnect {
-  @WebSocketServer() private readonly server!: Server;
+  @WebSocketServer() private readonly server!: Namespace;
 
   constructor(
     private readonly wsAuth: WsAuthService,
@@ -422,7 +422,7 @@ export class BoardGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       const socketIds = this.presence.socketIdsFor(boardId, dto.userId);
       for (const socketId of socketIds) {
-        const target = this.server.sockets.sockets.get(socketId);
+        const target = this.server.sockets.get(socketId);
         if (!target) continue;
         target.emit('board:kicked', { reason: 'KICKED_BY_OWNER' });
         // Disconnecting triggers the existing handleDisconnect → presence removal

@@ -75,9 +75,7 @@ describe('BoardGateway', () => {
   let server: {
     to: jest.Mock;
     in: jest.Mock;
-    sockets: {
-      sockets: Map<string, { emit: jest.Mock; disconnect: jest.Mock }>;
-    };
+    sockets: Map<string, { emit: jest.Mock; disconnect: jest.Mock }>;
   };
 
   beforeEach(() => {
@@ -148,7 +146,7 @@ describe('BoardGateway', () => {
       in: jest
         .fn()
         .mockReturnValue({ fetchSockets: jest.fn().mockResolvedValue([]) }),
-      sockets: { sockets: new Map() },
+      sockets: new Map(),
     };
     (gateway as unknown as { server: typeof server }).server = server;
   });
@@ -855,8 +853,8 @@ describe('BoardGateway', () => {
       presence.socketIdsFor.mockReturnValue(['socket-a', 'socket-b']);
       const targetA = { emit: jest.fn(), disconnect: jest.fn() };
       const targetB = { emit: jest.fn(), disconnect: jest.fn() };
-      server.sockets.sockets.set('socket-a', targetA);
-      server.sockets.sockets.set('socket-b', targetB);
+      server.sockets.set('socket-a', targetA);
+      server.sockets.set('socket-b', targetB);
 
       const ack = await gateway.onMemberKick(client as never, {
         userId: 'user-2',
