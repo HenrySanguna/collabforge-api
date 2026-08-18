@@ -489,7 +489,7 @@ export class BoardGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private async broadcastTallyIfLive(boardId: string): Promise<void> {
     const board = await this.boards.findByIdOrFail(boardId);
-    if (!board.liveTally) return;
+    if (!board.liveTally && !board.revealed) return;
     const tally = await this.votes.tally(boardId);
     this.server.to(room(boardId)).emit('vote:tally', { tally });
   }

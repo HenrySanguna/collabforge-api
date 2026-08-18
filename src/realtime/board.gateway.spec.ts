@@ -607,6 +607,26 @@ describe('BoardGateway', () => {
       });
     });
 
+    it('difunde vote:tally a la sala cuando el board ya está revealed aunque liveTally sea false', async () => {
+      const client = aClient();
+      votes.cast.mockResolvedValue({ remaining: 1, count: 1 });
+      boards.findByIdOrFail.mockResolvedValue({
+        id: 'board-1',
+        liveTally: false,
+        revealed: true,
+      });
+      votes.tally.mockResolvedValue({ 'note-1': 2 });
+      const serverEmit = jest.fn();
+      server.to.mockReturnValue({ emit: serverEmit });
+
+      await gateway.onVoteCast(client as never, { noteId: 'note-1' });
+
+      expect(server.to).toHaveBeenCalledWith(room('board-1'));
+      expect(serverEmit).toHaveBeenCalledWith('vote:tally', {
+        tally: { 'note-1': 2 },
+      });
+    });
+
     it('devuelve un ack de error cuando el presupuesto está agotado', async () => {
       const client = aClient();
       votes.cast.mockRejectedValue(
