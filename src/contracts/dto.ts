@@ -153,6 +153,7 @@ export interface TimerUpdatedPayload {
   endsAt: string | null;
   paused: boolean;
   remainingMs?: number;
+  serverTime: string;
 }
 
 export interface VoteMyUpdatePayload {

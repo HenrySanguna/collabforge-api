@@ -342,9 +342,11 @@ export class BoardGateway implements OnGatewayConnection, OnGatewayDisconnect {
         user.id,
         dto.durationSeconds,
       );
-      this.server
-        .to(room(boardId))
-        .emit('session:timer-updated', { endsAt, paused: false });
+      this.server.to(room(boardId)).emit('session:timer-updated', {
+        endsAt,
+        paused: false,
+        serverTime: new Date().toISOString(),
+      });
       return { ok: true, data: { endsAt } };
     } catch (err) {
       return { ok: false, error: toWsErrorPayload(err) };
@@ -358,7 +360,10 @@ export class BoardGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const { boardId, user } = requireSocketData(client);
     try {
       const state = await this.session.pauseTimer(boardId, user.id);
-      this.server.to(room(boardId)).emit('session:timer-updated', state);
+      this.server.to(room(boardId)).emit('session:timer-updated', {
+        ...state,
+        serverTime: new Date().toISOString(),
+      });
       return { ok: true, data: undefined };
     } catch (err) {
       return { ok: false, error: toWsErrorPayload(err) };
@@ -372,7 +377,10 @@ export class BoardGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const { boardId, user } = requireSocketData(client);
     try {
       const state = await this.session.cancelTimer(boardId, user.id);
-      this.server.to(room(boardId)).emit('session:timer-updated', state);
+      this.server.to(room(boardId)).emit('session:timer-updated', {
+        ...state,
+        serverTime: new Date().toISOString(),
+      });
       return { ok: true, data: undefined };
     } catch (err) {
       return { ok: false, error: toWsErrorPayload(err) };

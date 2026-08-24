@@ -733,6 +733,7 @@ describe('BoardGateway', () => {
       expect(serverEmit).toHaveBeenCalledWith('session:timer-updated', {
         endsAt: '2026-01-01T00:01:00Z',
         paused: false,
+        serverTime: expect.any(String),
       });
       expect(ack).toEqual({
         ok: true,
@@ -759,6 +760,7 @@ describe('BoardGateway', () => {
         endsAt: null,
         paused: true,
         remainingMs: 4000,
+        serverTime: expect.any(String),
       });
       expect(ack).toEqual({ ok: true, data: undefined });
     });
@@ -777,6 +779,7 @@ describe('BoardGateway', () => {
       expect(serverEmit).toHaveBeenCalledWith('session:timer-updated', {
         endsAt: null,
         paused: false,
+        serverTime: expect.any(String),
       });
       expect(ack).toEqual({ ok: true, data: undefined });
     });
