@@ -75,9 +75,7 @@ describe('BoardGateway', () => {
   let server: {
     to: jest.Mock;
     in: jest.Mock;
-    sockets: {
-      sockets: Map<string, { emit: jest.Mock; disconnect: jest.Mock }>;
-    };
+    sockets: Map<string, { emit: jest.Mock; disconnect: jest.Mock }>;
   };
 
   beforeEach(() => {
@@ -148,7 +146,7 @@ describe('BoardGateway', () => {
       in: jest
         .fn()
         .mockReturnValue({ fetchSockets: jest.fn().mockResolvedValue([]) }),
-      sockets: { sockets: new Map() },
+      sockets: new Map(),
     };
     (gateway as unknown as { server: typeof server }).server = server;
   });
@@ -607,6 +605,26 @@ describe('BoardGateway', () => {
       });
     });
 
+    it('difunde vote:tally a la sala cuando el board ya está revealed aunque liveTally sea false', async () => {
+      const client = aClient();
+      votes.cast.mockResolvedValue({ remaining: 1, count: 1 });
+      boards.findByIdOrFail.mockResolvedValue({
+        id: 'board-1',
+        liveTally: false,
+        revealed: true,
+      });
+      votes.tally.mockResolvedValue({ 'note-1': 2 });
+      const serverEmit = jest.fn();
+      server.to.mockReturnValue({ emit: serverEmit });
+
+      await gateway.onVoteCast(client as never, { noteId: 'note-1' });
+
+      expect(server.to).toHaveBeenCalledWith(room('board-1'));
+      expect(serverEmit).toHaveBeenCalledWith('vote:tally', {
+        tally: { 'note-1': 2 },
+      });
+    });
+
     it('devuelve un ack de error cuando el presupuesto está agotado', async () => {
       const client = aClient();
       votes.cast.mockRejectedValue(
@@ -715,6 +733,7 @@ describe('BoardGateway', () => {
       expect(serverEmit).toHaveBeenCalledWith('session:timer-updated', {
         endsAt: '2026-01-01T00:01:00Z',
         paused: false,
+        serverTime: expect.any(String),
       });
       expect(ack).toEqual({
         ok: true,
@@ -741,6 +760,7 @@ describe('BoardGateway', () => {
         endsAt: null,
         paused: true,
         remainingMs: 4000,
+        serverTime: expect.any(String),
       });
       expect(ack).toEqual({ ok: true, data: undefined });
     });
@@ -759,6 +779,7 @@ describe('BoardGateway', () => {
       expect(serverEmit).toHaveBeenCalledWith('session:timer-updated', {
         endsAt: null,
         paused: false,
+        serverTime: expect.any(String),
       });
       expect(ack).toEqual({ ok: true, data: undefined });
     });
@@ -835,8 +856,8 @@ describe('BoardGateway', () => {
       presence.socketIdsFor.mockReturnValue(['socket-a', 'socket-b']);
       const targetA = { emit: jest.fn(), disconnect: jest.fn() };
       const targetB = { emit: jest.fn(), disconnect: jest.fn() };
-      server.sockets.sockets.set('socket-a', targetA);
-      server.sockets.sockets.set('socket-b', targetB);
+      server.sockets.set('socket-a', targetA);
+      server.sockets.set('socket-b', targetB);
 
       const ack = await gateway.onMemberKick(client as never, {
         userId: 'user-2',
